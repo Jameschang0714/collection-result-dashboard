@@ -1,0 +1,16 @@
+# Ignore common data files
+*.csv
+*.xlsx
+
+# Ignore Python virtual environments
+venv/
+.venv/
+env/
+
+# Ignore Streamlit specific files
+.streamlit/secrets.toml
+
+# Ignore generated files
+__pycache__/
+*.pyc
+*.log
