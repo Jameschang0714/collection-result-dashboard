@@ -83,6 +83,15 @@ def format_seconds_to_hms(seconds):
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+# --- NEW HELPER FUNCTION ---
+def format_seconds_to_ms(seconds):
+    """將秒數格式化為更直觀的 'Xm Ys' 格式。"""
+    if pd.isna(seconds) or not np.isfinite(seconds) or seconds < 0:
+        return "0m 0s"
+    seconds = int(round(seconds))
+    minutes, sec = divmod(seconds, 60)
+    return f"{minutes}m {sec}s"
+
 def conditional_format(val):
     if isinstance(val, (int, float)):
         return f"{val:,.2f}"
@@ -363,6 +372,7 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
     # 處理被分析人員的數據
     agent_df = filtered_raw_df[filtered_raw_df[COL_AGENT_ID] == agent_id]
     agent_avg_metric = 0
+    agent_counts = pd.Series(dtype='float64')
     if not agent_df.empty and agent_df[metric_col].sum() > 0:
         if not is_binned:
             agent_counts = agent_df[agent_df[metric_col] > 0][metric_col].value_counts().sort_index()
@@ -379,6 +389,7 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
 
     # 處理標竿群組的數據
     benchmark_avg_metric = 0
+    avg_benchmark_counts = pd.Series(dtype='float64')
     if benchmark_ids:
         benchmark_df = filtered_raw_df[filtered_raw_df[COL_AGENT_ID].isin(benchmark_ids)]
         if not benchmark_df.empty and benchmark_df[metric_col].sum() > 0:
@@ -398,15 +409,43 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
                 fig.add_trace(go.Scatter(x=avg_benchmark_counts.index.astype(str), y=avg_benchmark_counts.values, name='標竿群組 (平均案件數/人)', mode='lines+markers', line=dict(color='red', dash='dash')))
             benchmark_avg_metric = benchmark_df[benchmark_df[metric_col] > 0][metric_col].mean()
 
-    # 添加平均值標示線 (僅針對非分箱數據)
-    if not is_binned:
-        if agent_avg_metric > 0:
-            fig.add_shape(type="line", x0=agent_avg_metric, y0=0, x1=agent_avg_metric, y1=y_max, line=dict(color="deepskyblue", width=2, dash="dot"))
-            fig.add_annotation(x=agent_avg_metric, y=y_max, text=f"個人平均: {agent_avg_metric:.2f}", showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(220,240,255,0.7)")
-        if benchmark_avg_metric > 0:
-            fig.add_shape(type="line", x0=benchmark_avg_metric, y0=0, x1=benchmark_avg_metric, y1=y_max * 0.9, line=dict(color="tomato", width=2, dash="dot"))
-            fig.add_annotation(x=benchmark_avg_metric, y=y_max * 0.9, text=f"標竿平均: {benchmark_avg_metric:.2f}", showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(255,220,220,0.7)")
+    # --- UPDATED SECTION FOR AVERAGE LINES ---
+    # 添加個人平均線
+    if agent_avg_metric > 0:
+        line_x, avg_text = (None, "")
+        if is_binned:
+            avg_text = f"個人平均: {format_seconds_to_ms(agent_avg_metric)}"
+            bins = np.arange(0, threshold + 31, 30)
+            bin_index = np.searchsorted(bins, agent_avg_metric, side='right') - 1
+            all_bins = agent_counts.index.union(avg_benchmark_counts.index)
+            if bin_index >= 0 and bin_index < len(all_bins):
+                line_x = all_bins[bin_index]
+        else:
+            avg_text = f"個人平均: {agent_avg_metric:.2f}"
+            line_x = agent_avg_metric
         
+        if line_x is not None:
+            fig.add_shape(type="line", x0=line_x, y0=0, x1=line_x, y1=y_max, line=dict(color="deepskyblue", width=2, dash="dot"))
+            fig.add_annotation(x=line_x, y=y_max, text=avg_text, showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(220,240,255,0.7)")
+
+    # 添加標竿平均線
+    if benchmark_avg_metric > 0:
+        line_x_bench, avg_text_bench = (None, "")
+        if is_binned:
+            avg_text_bench = f"標竿平均: {format_seconds_to_ms(benchmark_avg_metric)}"
+            bins = np.arange(0, threshold + 31, 30)
+            bin_index = np.searchsorted(bins, benchmark_avg_metric, side='right') - 1
+            all_bins = agent_counts.index.union(avg_benchmark_counts.index)
+            if bin_index >= 0 and bin_index < len(all_bins):
+                line_x_bench = all_bins[bin_index]
+        else:
+            avg_text_bench = f"標竿平均: {benchmark_avg_metric:.2f}"
+            line_x_bench = benchmark_avg_metric
+
+        if line_x_bench is not None:
+            fig.add_shape(type="line", x0=line_x_bench, y0=0, x1=line_x_bench, y1=y_max * 0.9, line=dict(color="tomato", width=2, dash="dot"))
+            fig.add_annotation(x=line_x_bench, y=y_max * 0.9, text=avg_text_bench, showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(255,220,220,0.7)")
+    
     if y_max == 0:
         return go.Figure().update_layout(title_text=f'在此條件下無有效結案案件')
         
@@ -561,7 +600,8 @@ if df_raw is not None:
             kpi_cols[2].metric("平均撥打次數/案", f"{final_filtered_df[METRIC_AVG_TOUCHES].mean():.2f}")
             if st.session_state.get('has_connected_calls_data'):
                 kpi_cols[3].metric("效率 (金額/有效通話)", f"${final_filtered_df[METRIC_EFFICIENCY_PER_CALL].mean():,.0f}")
-            kpi_cols[4].metric("效率 (金額/小時)", f"${final_filtered_df[METRIC_EFFICIENCY_PER_HOUR].mean():,.0f}")
+            if st.session_state.get('has_talk_time_data'):
+                kpi_cols[4].metric("效率 (金額/小時)", f"${final_filtered_df[METRIC_EFFICIENCY_PER_HOUR].mean():,.0f}")
             st.markdown("---")
             
             if len(selected_groups) > 1 and selected_display_name == '全體':
@@ -775,7 +815,7 @@ if df_raw is not None:
                         kpi_cols[2].metric("平均接通次數/案", f"{val:.2f}")
                     elif metric_to_analyze == '通話時長':
                         val = (agent_summary_data[METRIC_TOTAL_TALK_TIME].iloc[0] / agent_summary_data[METRIC_TOTAL_CASES].iloc[0]) if agent_summary_data[METRIC_TOTAL_CASES].iloc[0] > 0 else 0
-                        kpi_cols[2].metric("平均通話時長/案", f"{val:.2f} 秒")
+                        kpi_cols[2].metric("平均通話時長/案", format_seconds_to_ms(val))
 
                 else:
                     st.warning("找不到該人員的績效摘要數據。")
@@ -806,7 +846,7 @@ if df_raw is not None:
                             kpi_cols_bench[2].metric("人均接通次數/案", f"{val:.2f}")
                         elif metric_to_analyze == '通話時長':
                             val = (benchmark_summary_df[METRIC_TOTAL_TALK_TIME].sum() / benchmark_summary_df[METRIC_TOTAL_CASES].sum()) if benchmark_summary_df[METRIC_TOTAL_CASES].sum() > 0 else 0
-                            kpi_cols_bench[2].metric("人均通話時長/案", f"{val:.2f} 秒")
+                            kpi_cols_bench[2].metric("人均通話時長/案", format_seconds_to_ms(val))
 
                 # --- CODE MODIFICATION END ---
             else:
