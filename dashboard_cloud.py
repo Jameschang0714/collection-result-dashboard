@@ -366,6 +366,49 @@ def create_agent_call_distribution_comparison_chart(raw_df, agent_id, benchmark_
     fig.update_layout(title_text=f'<b>{agent_display_name}</b> vs. 標竿群組工作模式比較 ({metric_display_name})', xaxis_title=f'單一案件所需{metric_display_name}', yaxis_title='案件數量', font=dict(family="Arial, sans-serif", size=14), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), height=500, barmode='group')
     return fig
 
+# --- NEW FUNCTION ---
+def create_payment_distribution_chart(raw_df, agent_id, benchmark_ids, agent_display_name):
+    """
+    建立一個箱型圖來比較個人與標竿群組的案件價值分佈。
+    """
+    fig = go.Figure()
+
+    # 取得被分析人員的數據
+    agent_df = raw_df[raw_df[COL_AGENT_ID] == agent_id]
+    if not agent_df.empty:
+        fig.add_trace(go.Box(
+            y=agent_df[COL_PAYMENT_AMOUNT],
+            name=agent_display_name,
+            marker_color='darkcyan',
+            boxpoints='all', # 顯示所有數據點
+            jitter=0.3,
+            pointpos=-1.8
+        ))
+
+    # 取得標竿群組的數據
+    if benchmark_ids:
+        benchmark_df = raw_df[raw_df[COL_AGENT_ID].isin(benchmark_ids)]
+        if not benchmark_df.empty:
+            fig.add_trace(go.Box(
+                y=benchmark_df[COL_PAYMENT_AMOUNT],
+                name='標竿群組',
+                marker_color='tomato',
+                boxpoints='all',
+                jitter=0.3,
+                pointpos=-1.8
+            ))
+
+    if agent_df.empty and (not benchmark_ids or benchmark_df.empty):
+        return go.Figure().update_layout(title_text='沒有足夠的案件數據可供分析價值分佈')
+
+    fig.update_layout(
+        title_text=f'<b>{agent_display_name}</b> vs. 標竿群組案件價值分佈比較',
+        yaxis_title='單案催回金額 ($)',
+        font=dict(family="Arial, sans-serif", size=14),
+        showlegend=False # 箱型圖的名稱會顯示在X軸上
+    )
+    return fig
+
 # --- 主應用程式介面 (Main App Interface) ---
 
 st.title("📊 電催績效追蹤歸因分析儀表板 (雲端版)")
@@ -594,7 +637,7 @@ if df_raw is not None:
 
     with tab4:
         st.header("催員深度剖析 (Agent Deep Dive)")
-        st.write("此模組深入分析單一催收員的工作模式，並與標竿群組進行比較，以利於識別其工作型態與效率。")
+        st.write("此模組深入分析單一催收員的工作模式與產出特徵，並與標竿群組進行比較，以利於識別其工作型態與效率。")
 
         if not filtered_df.empty:
             agent_select_df_deep_dive = filtered_df[[COL_AGENT_ID, COL_AGENT_NAME]].drop_duplicates()
@@ -628,9 +671,18 @@ if df_raw is not None:
                     benchmark_display_names = st.multiselect("選擇比較標竿群組 (可多選)", options=benchmark_options, key="deep_dive_benchmark")
                     benchmark_ids = [agent_id_map_deep_dive[name] for name in benchmark_display_names]
 
-                st.plotly_chart(create_agent_call_distribution_comparison_chart(date_filtered_raw_df, selected_agent_id, benchmark_ids, selected_agent_display_name, call_threshold, metric_to_analyze), use_container_width=True)
+                # --- CODE MODIFICATION START ---
 
-                # --- UPDATED CODE BLOCK START ---
+                # 建立一個分頁或欄位來並排顯示圖表
+                chart_col1, chart_col2 = st.columns(2)
+
+                with chart_col1:
+                    st.plotly_chart(create_agent_call_distribution_comparison_chart(date_filtered_raw_df, selected_agent_id, benchmark_ids, selected_agent_display_name, call_threshold, metric_to_analyze), use_container_width=True)
+                
+                with chart_col2:
+                    st.plotly_chart(create_payment_distribution_chart(date_filtered_raw_df, selected_agent_id, benchmark_ids, selected_agent_display_name), use_container_width=True)
+                
+                st.markdown("---")
                 
                 st.subheader("績效總結比較")
 
@@ -676,7 +728,7 @@ if df_raw is not None:
                         elif metric_to_analyze == '總接通次數' and st.session_state.get('has_connected_calls_data'):
                             kpi_cols_bench[2].metric("平均接通次數/案", f"{avg_connected_touches:.2f}")
 
-                # --- UPDATED CODE BLOCK END ---
+                # --- CODE MODIFICATION END ---
             else:
                 st.info("請在側邊欄選擇包含催員的組別以進行深度剖析。")
         else:
