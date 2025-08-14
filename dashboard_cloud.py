@@ -343,14 +343,17 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
         metric_col = COL_CALLS_IN_WINDOW
         metric_display = '總撥打次數'
         xaxis_title = f'單一案件所需{metric_display}'
+        is_binned = False
     elif metric_to_analyze == '總接通次數':
         metric_col = COL_CONNECTED_CALLS_IN_WINDOW
         metric_display = '總接通次數'
         xaxis_title = f'單一案件所需{metric_display}'
+        is_binned = False
     elif metric_to_analyze == '通話時長':
         metric_col = COL_TALK_TIME_IN_WINDOW
         metric_display = '通話時長'
         xaxis_title = f'單一案件{metric_display} (秒)'
+        is_binned = True
     else:
         return go.Figure().update_layout(title_text='無效的分析指標')
 
@@ -361,12 +364,12 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
     agent_df = filtered_raw_df[filtered_raw_df[COL_AGENT_ID] == agent_id]
     agent_avg_metric = 0
     if not agent_df.empty and agent_df[metric_col].sum() > 0:
-        if metric_to_analyze in ['總撥打次數', '總接通次數']:
+        if not is_binned:
             agent_counts = agent_df[agent_df[metric_col] > 0][metric_col].value_counts().sort_index()
         else: # 通話時長分箱處理
             bins = np.arange(0, threshold + 31, 30)
-            labels = [f'{i}-{i+30}' for i in bins[:-1]]
-            agent_df['time_bin'] = pd.cut(agent_df[metric_col], bins=bins, labels=labels, right=False)
+            labels = [f'{i}-{i+29}' for i in bins[:-1]]
+            agent_df['time_bin'] = pd.cut(agent_df[metric_col], bins=bins, labels=labels, right=False, include_lowest=True)
             agent_counts = agent_df['time_bin'].value_counts().sort_index()
 
         if not agent_counts.empty:
@@ -379,12 +382,12 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
     if benchmark_ids:
         benchmark_df = filtered_raw_df[filtered_raw_df[COL_AGENT_ID].isin(benchmark_ids)]
         if not benchmark_df.empty and benchmark_df[metric_col].sum() > 0:
-            if metric_to_analyze in ['總撥打次數', '總接通次數']:
+            if not is_binned:
                 benchmark_counts = benchmark_df[benchmark_df[metric_col] > 0][metric_col].value_counts()
             else: # 通話時長分箱處理
                 bins = np.arange(0, threshold + 31, 30)
-                labels = [f'{i}-{i+30}' for i in bins[:-1]]
-                benchmark_df['time_bin'] = pd.cut(benchmark_df[metric_col], bins=bins, labels=labels, right=False)
+                labels = [f'{i}-{i+29}' for i in bins[:-1]]
+                benchmark_df['time_bin'] = pd.cut(benchmark_df[metric_col], bins=bins, labels=labels, right=False, include_lowest=True)
                 benchmark_counts = benchmark_df['time_bin'].value_counts()
             
             num_benchmark_agents = len(benchmark_ids)
@@ -395,20 +398,14 @@ def create_agent_deep_dive_distribution_chart(raw_df, agent_id, benchmark_ids, a
                 fig.add_trace(go.Scatter(x=avg_benchmark_counts.index.astype(str), y=avg_benchmark_counts.values, name='標竿群組 (平均案件數/人)', mode='lines+markers', line=dict(color='red', dash='dash')))
             benchmark_avg_metric = benchmark_df[benchmark_df[metric_col] > 0][metric_col].mean()
 
-    # 添加平均值標示線
-    if agent_avg_metric > 0:
-        avg_text = f"個人平均: {agent_avg_metric:.2f}"
-        if metric_to_analyze == '通話時長':
-             avg_text += "s"
-        fig.add_shape(type="line", x0=-0.5, y0=agent_avg_metric if metric_to_analyze != '通話時長' else None, x1=len(agent_counts)-0.5 if 'agent_counts' in locals() and not agent_counts.empty else 0, y1=agent_avg_metric if metric_to_analyze != '通話時長' else None, line=dict(color="deepskyblue", width=2, dash="dot"), yref='y' if metric_to_analyze != '通話時長' else 'paper')
-        # The annotation logic needs to be smarter for binned data
-        # For simplicity, we skip annotating average line for binned data for now.
-
-    if benchmark_avg_metric > 0:
-        avg_text = f"標竿平均: {benchmark_avg_metric:.2f}"
-        if metric_to_analyze == '通話時長':
-             avg_text += "s"
-        # Similar annotation complexity for binned data.
+    # 添加平均值標示線 (僅針對非分箱數據)
+    if not is_binned:
+        if agent_avg_metric > 0:
+            fig.add_shape(type="line", x0=agent_avg_metric, y0=0, x1=agent_avg_metric, y1=y_max, line=dict(color="deepskyblue", width=2, dash="dot"))
+            fig.add_annotation(x=agent_avg_metric, y=y_max, text=f"個人平均: {agent_avg_metric:.2f}", showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(220,240,255,0.7)")
+        if benchmark_avg_metric > 0:
+            fig.add_shape(type="line", x0=benchmark_avg_metric, y0=0, x1=benchmark_avg_metric, y1=y_max * 0.9, line=dict(color="tomato", width=2, dash="dot"))
+            fig.add_annotation(x=benchmark_avg_metric, y=y_max * 0.9, text=f"標竿平均: {benchmark_avg_metric:.2f}", showarrow=True, arrowhead=1, yshift=10, bgcolor="rgba(255,220,220,0.7)")
         
     if y_max == 0:
         return go.Figure().update_layout(title_text=f'在此條件下無有效結案案件')
@@ -729,7 +726,7 @@ if df_raw is not None:
                     slider_label = f"設定納入分析的單案最大{metric_to_analyze}(秒)"
                     default_val = 600 # 預設10分鐘
                 
-                max_val = int(date_filtered_raw_df[max_val_col].max())
+                max_val = int(date_filtered_raw_df[max_val_col].max()) if not date_filtered_raw_df.empty else default_val
                 threshold = st.slider(slider_label, min_value=1, max_value=max_val if max_val > 0 else 1, value=min(default_val, max_val) if max_val > 0 else 1, step=1, disabled=(max_val == 0))
 
                 if 'deep_dive_benchmark' not in st.session_state:
@@ -769,12 +766,16 @@ if df_raw is not None:
                     kpi_cols[0].metric("期間催回總額", f"${agent_summary_data[METRIC_TOTAL_COLLECTIONS].iloc[0]:,.0f}")
                     kpi_cols[1].metric("期間處理案件數", f"{agent_summary_data[METRIC_TOTAL_CASES].iloc[0]:,.0f}")
                     
-                    # 顯示與分析指標相關的平均值
-                    if st.session_state.get('has_talk_time_data'):
-                         avg_talk_time = (agent_summary_data[METRIC_TOTAL_TALK_TIME].iloc[0] / agent_summary_data[METRIC_TOTAL_CASES].iloc[0]) if agent_summary_data[METRIC_TOTAL_CASES].iloc[0] > 0 else 0
-                         kpi_cols[2].metric("平均通話時長/案", f"{avg_talk_time:.2f} 秒")
-                    else:
-                         kpi_cols[2].metric("平均撥打次數/案", f"{agent_summary_data[METRIC_AVG_TOUCHES].iloc[0]:.2f}")
+                    # 根據選擇的分析指標，動態顯示第三個KPI
+                    if metric_to_analyze == '總撥打次數':
+                        val = agent_summary_data[METRIC_AVG_TOUCHES].iloc[0]
+                        kpi_cols[2].metric("平均撥打次數/案", f"{val:.2f}")
+                    elif metric_to_analyze == '總接通次數':
+                        val = agent_summary_data[METRIC_AVG_CONNECTED_TOUCHES].iloc[0]
+                        kpi_cols[2].metric("平均接通次數/案", f"{val:.2f}")
+                    elif metric_to_analyze == '通話時長':
+                        val = (agent_summary_data[METRIC_TOTAL_TALK_TIME].iloc[0] / agent_summary_data[METRIC_TOTAL_CASES].iloc[0]) if agent_summary_data[METRIC_TOTAL_CASES].iloc[0] > 0 else 0
+                        kpi_cols[2].metric("平均通話時長/案", f"{val:.2f} 秒")
 
                 else:
                     st.warning("找不到該人員的績效摘要數據。")
@@ -790,20 +791,22 @@ if df_raw is not None:
                         # 計算標竿群組的人均指標
                         avg_collections = benchmark_summary_df[METRIC_TOTAL_COLLECTIONS].mean()
                         avg_cases = benchmark_summary_df[METRIC_TOTAL_CASES].mean()
-                        avg_touches = benchmark_summary_df[METRIC_AVG_TOUCHES].mean()
-                        avg_connected_touches = benchmark_summary_df[METRIC_AVG_CONNECTED_TOUCHES].mean()
-                        avg_talk_time_per_case = (benchmark_summary_df[METRIC_TOTAL_TALK_TIME].sum() / benchmark_summary_df[METRIC_TOTAL_CASES].sum()) if benchmark_summary_df[METRIC_TOTAL_CASES].sum() > 0 else 0
-
-
+                        
                         # 顯示指標
                         kpi_cols_bench = st.columns(3)
                         kpi_cols_bench[0].metric("人均催回總額", f"${avg_collections:,.0f}")
                         kpi_cols_bench[1].metric("人均處理案件數", f"{avg_cases:.2f}")
 
-                        if st.session_state.get('has_talk_time_data'):
-                            kpi_cols_bench[2].metric("人均通話時長/案", f"{avg_talk_time_per_case:.2f} 秒")
-                        else:
-                            kpi_cols_bench[2].metric("人均撥打次數/案", f"{avg_touches:.2f}")
+                        # 根據選擇的分析指標，動態顯示第三個KPI
+                        if metric_to_analyze == '總撥打次數':
+                            val = benchmark_summary_df[METRIC_AVG_TOUCHES].mean()
+                            kpi_cols_bench[2].metric("人均撥打次數/案", f"{val:.2f}")
+                        elif metric_to_analyze == '總接通次數':
+                            val = benchmark_summary_df[METRIC_AVG_CONNECTED_TOUCHES].mean()
+                            kpi_cols_bench[2].metric("人均接通次數/案", f"{val:.2f}")
+                        elif metric_to_analyze == '通話時長':
+                            val = (benchmark_summary_df[METRIC_TOTAL_TALK_TIME].sum() / benchmark_summary_df[METRIC_TOTAL_CASES].sum()) if benchmark_summary_df[METRIC_TOTAL_CASES].sum() > 0 else 0
+                            kpi_cols_bench[2].metric("人均通話時長/案", f"{val:.2f} 秒")
 
                 # --- CODE MODIFICATION END ---
             else:
