@@ -149,11 +149,6 @@ def load_and_prep_data():
             st.session_state['has_connected_calls_data'] = True
 
         # Ensure column names for group_df are correct after loading from Google Drive
-        # The original code uses header=None, usecols="A:C", names=[COL_GROUP, COL_AGENT_ID, COL_AGENT_NAME]
-        # When loading from Google Drive, it might already have headers.
-        # Let's assume the first row is header and rename if necessary, or ensure it's loaded correctly.
-        # If the Excel file truly has no header, then the `names` parameter in `pd.read_excel` is crucial.
-        # For now, I'll assume the `load_data_from_gdrive` returns a dataframe that needs renaming.
         group_df.columns = [COL_GROUP, COL_AGENT_ID, COL_AGENT_NAME] # Force column names
 
         merged_df = pd.merge(attr_df, group_df, on=COL_AGENT_ID, how='inner')
@@ -487,7 +482,6 @@ if df_raw is not None:
                 time_unit_selection = st.radio("選擇時間顆粒度", ('日', '週'), horizontal=True)
                 show_per_capita = st.checkbox("以人均值顯示趨勢", value=True)
             with col2:
-                # --- BUG FIX V2.9: Use the correct filtered dataframe ---
                 st.plotly_chart(create_performance_trend_chart(filtered_daily_df, trend_metric_col, time_unit_selection, group_sizes, show_per_capita), use_container_width=True)
         else:
             st.info("在選定的條件下沒有數據可顯示。")
@@ -636,9 +630,15 @@ if df_raw is not None:
 
                 st.plotly_chart(create_agent_call_distribution_comparison_chart(date_filtered_raw_df, selected_agent_id, benchmark_ids, selected_agent_display_name, call_threshold, metric_to_analyze), use_container_width=True)
 
-                st.subheader(f"績效總結")
-                agent_summary_data = final_filtered_df[final_filtered_df[COL_DISPLAY_NAME] == selected_agent_display_name]
+                # --- UPDATED CODE BLOCK START ---
+                
+                st.subheader("績效總結比較")
+
+                # 1. 取得並顯示被分析人員的數據
+                agent_summary_data = agent_summary_df[agent_summary_df[COL_AGENT_ID] == selected_agent_id]
+                
                 if not agent_summary_data.empty:
+                    st.markdown(f"**分析人員: {selected_agent_display_name}**")
                     kpi_cols = st.columns(3)
                     kpi_cols[0].metric("期間催回總額", f"${agent_summary_data[METRIC_TOTAL_COLLECTIONS].iloc[0]:,.0f}")
                     kpi_cols[1].metric("期間處理案件數", f"{agent_summary_data[METRIC_TOTAL_CASES].iloc[0]:,.0f}")
@@ -649,6 +649,34 @@ if df_raw is not None:
                     elif metric_to_analyze == '總接通次數' and st.session_state.get('has_connected_calls_data'):
                         avg_val = agent_summary_data[METRIC_AVG_CONNECTED_TOUCHES].iloc[0]
                         kpi_cols[2].metric("平均接通次數/案", f"{avg_val:.2f}")
+                else:
+                    st.warning("找不到該人員的績效摘要數據。")
+
+                # 2. 如果有選擇標竿群組，則計算並顯示其平均數據
+                if benchmark_ids:
+                    benchmark_summary_df = agent_summary_df[agent_summary_df[COL_AGENT_ID].isin(benchmark_ids)]
+                    
+                    if not benchmark_summary_df.empty:
+                        st.markdown("---") # 視覺分隔線
+                        st.markdown("**標竿群組平均績效**")
+                        
+                        # 計算標竿群組的人均指標
+                        avg_collections = benchmark_summary_df[METRIC_TOTAL_COLLECTIONS].mean()
+                        avg_cases = benchmark_summary_df[METRIC_TOTAL_CASES].mean()
+                        avg_touches = benchmark_summary_df[METRIC_AVG_TOUCHES].mean()
+                        avg_connected_touches = benchmark_summary_df[METRIC_AVG_CONNECTED_TOUCHES].mean()
+
+                        # 顯示指標
+                        kpi_cols_bench = st.columns(3)
+                        kpi_cols_bench[0].metric("人均催回總額", f"${avg_collections:,.0f}")
+                        kpi_cols_bench[1].metric("人均處理案件數", f"{avg_cases:.2f}")
+
+                        if metric_to_analyze == '總撥打次數':
+                            kpi_cols_bench[2].metric("平均撥打次數/案", f"{avg_touches:.2f}")
+                        elif metric_to_analyze == '總接通次數' and st.session_state.get('has_connected_calls_data'):
+                            kpi_cols_bench[2].metric("平均接通次數/案", f"{avg_connected_touches:.2f}")
+
+                # --- UPDATED CODE BLOCK END ---
             else:
                 st.info("請在側邊欄選擇包含催員的組別以進行深度剖析。")
         else:
